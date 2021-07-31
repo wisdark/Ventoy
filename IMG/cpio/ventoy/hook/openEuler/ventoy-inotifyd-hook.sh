@@ -29,20 +29,11 @@ if is_inotify_ventoy_part $3; then
 
     vtlog "##### INOTIFYD: $2/$3 is created (YES) ..."
 
-    vtGenRulFile='/etc/udev/rules.d/99-live-squash.rules'
-    if [ -e $vtGenRulFile ] && $GREP -q dmsquash $vtGenRulFile; then
-        vtScript=$($GREP -m1 'RUN.=' $vtGenRulFile | $AWK -F'RUN.=' '{print $2}' | $SED 's/"\(.*\)".*/\1/')
-        vtlog "vtScript=$vtScript"
-        $vtScript
-    else
-        vtlog "$vtGenRulFile not exist..."
-    fi
-
     vtlog "find ventoy partition ..."
     
-    vtReplaceOpt=noreplace
+    #vtReplaceOpt=noreplace
     
-    $BUSYBOX_PATH/sh $VTOY_PATH/hook/default/udev_disk_hook.sh $3 $vtReplaceOpt
+    $BUSYBOX_PATH/sh $VTOY_PATH/hook/default/udev_disk_hook.sh $3 
     
     blkdev_num=$($VTOY_PATH/tool/dmsetup ls | grep ventoy | sed 's/.*(\([0-9][0-9]*\),.*\([0-9][0-9]*\).*/\1:\2/')  
     vtDM=$(ventoy_find_dm_id ${blkdev_num})
