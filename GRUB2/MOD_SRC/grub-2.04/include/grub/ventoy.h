@@ -135,7 +135,8 @@ typedef struct ventoy_windows_data
 {
     char auto_install_script[384];
     char injection_archive[384];
-    grub_uint8_t reserved[256];
+    grub_uint8_t windows11_bypass_check;
+    grub_uint8_t reserved[255];
 }ventoy_windows_data;
 
 
@@ -241,6 +242,7 @@ typedef struct ventoy_img_chunk_list
 #pragma pack(1)
 
 #define GRUB_FILE_REPLACE_MAGIC  0x1258BEEF
+#define GRUB_IMG_REPLACE_MAGIC   0x1259BEEF
 
 typedef const char * (*grub_env_get_pf)(const char *name);
 typedef int (*grub_env_set_pf)(const char *name, const char *val);
@@ -259,6 +261,7 @@ typedef struct ventoy_grub_param
     grub_env_get_pf grub_env_get;
     grub_env_set_pf grub_env_set;
     ventoy_grub_param_file_replace file_replace;
+    ventoy_grub_param_file_replace img_replace;
     grub_env_printf_pf grub_env_printf;
 }ventoy_grub_param;
 
