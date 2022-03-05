@@ -62,7 +62,9 @@ typedef struct ventoy_os_param
 
 	UINT64  vtoy_reserved[4];     // Internal use by ventoy
 
-	UINT8   reserved[31];
+    UINT8   vtoy_disk_signature[4];
+
+	UINT8   reserved[27];
 }ventoy_os_param;
 
 typedef struct ventoy_windows_data
@@ -152,5 +154,11 @@ typedef struct VTOY_GPT_INFO
 }
 
 #define LASTERR     GetLastError()
+
+int unxz(unsigned char *in, int in_size,
+    int(*fill)(void *dest, unsigned int size),
+    int(*flush)(void *src, unsigned int size),
+    unsigned char *out, int *in_used,
+    void(*error)(char *x));
 
 #endif

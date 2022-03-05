@@ -36,6 +36,16 @@ sh language.sh || exit 1
 sh build.sh
 cd -
 
+cd ../Plugson
+sh build.sh
+sh pack.sh
+cd -
+
+cd ../Vlnk
+sh build.sh
+sh pack.sh
+cd -
+
 
 LOOP=$(losetup -f)
 
@@ -112,6 +122,8 @@ cp $OPT ./tool $tmpdir/
 rm -f $tmpdir/ENROLL_THIS_KEY_IN_MOKMANAGER.cer
 cp $OPT Ventoy2Disk.sh $tmpdir/
 cp $OPT VentoyWeb.sh $tmpdir/
+cp $OPT VentoyPlugson.sh $tmpdir/
+cp $OPT VentoyVlnk.sh $tmpdir/
 cp $OPT VentoyGUI* $tmpdir/
 
 
@@ -121,6 +133,8 @@ cp $OPT CreatePersistentImg.sh $tmpdir/
 cp $OPT ExtendPersistentImg.sh $tmpdir/
 dos2unix -q $tmpdir/Ventoy2Disk.sh
 dos2unix -q $tmpdir/VentoyWeb.sh
+dos2unix -q $tmpdir/VentoyPlugson.sh
+dos2unix -q $tmpdir/VentoyVlnk.sh
 
 
 dos2unix -q $tmpdir/CreatePersistentImg.sh
@@ -159,6 +173,8 @@ find $tmpdir/ -type d -exec chmod 755 "{}" +
 find $tmpdir/ -type f -exec chmod 644 "{}" +
 chmod +x $tmpdir/Ventoy2Disk.sh
 chmod +x $tmpdir/VentoyWeb.sh
+chmod +x $tmpdir/VentoyPlugson.sh
+chmod +x $tmpdir/VentoyVlnk.sh
 chmod +x $tmpdir/VentoyGUI*
 
 cp $OPT $LANG_DIR/languages.json $tmpdir/tool/
@@ -174,12 +190,15 @@ tar -czvf ventoy-${curver}-linux.tar.gz $tmpdir
 rm -f ventoy-${curver}-windows.zip
 
 cp $OPT Ventoy2Disk.exe $tmpdir/
+cp $OPT VentoyPlugson.exe $tmpdir/
+cp $OPT VentoyVlnk.exe $tmpdir/
 cp $OPT FOR_X64_ARM.txt $tmpdir/
 mkdir -p $tmpdir/altexe
 cp $OPT Ventoy2Disk_*.exe $tmpdir/altexe/
 
 
 
+cp $OPT $tmpdir/tool/plugson.tar.xz $tmpdir/ventoy/
 cp $OPT $LANG_DIR/languages.json $tmpdir/ventoy/
 rm -rf $tmpdir/tool
 rm -f $tmpdir/*.sh
@@ -207,4 +226,6 @@ else
 fi
 
 rm -f log.txt
+rm -f sha256.txt
+sha256sum ventoy-${curver}-* > sha256.txt
 

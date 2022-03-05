@@ -402,6 +402,7 @@ int g_menu_update_mode = 0;
 int g_ventoy_tip_label_enable = 0;
 const char * g_ventoy_tip_msg1 = NULL;
 const char * g_ventoy_tip_msg2 = NULL;
+char g_ventoy_theme_path[256] = {0};
 static const char *g_ventoy_cur_img_path = NULL;
 static void menu_set_chosen_tip(grub_menu_t menu, int entry)
 {
@@ -410,9 +411,15 @@ static void menu_set_chosen_tip(grub_menu_t menu, int entry)
     menu_tip *tip;
     grub_menu_entry_t e = grub_menu_get_entry (menu, entry);
 
+    if (g_ventoy_theme_path[0])
+    {
+        grub_env_set("theme", g_ventoy_theme_path);        
+    }
+
     g_ventoy_tip_msg1 = g_ventoy_tip_msg2 = NULL;
     if (e && e->id && grub_strncmp(e->id, "VID_", 4) == 0) 
     {
+        g_ventoy_theme_path[0] = 0;
         img = (img_info *)(void *)grub_strtoul(e->id + 4, NULL, 16);
         if (img)
         {
@@ -423,6 +430,7 @@ static void menu_set_chosen_tip(grub_menu_t menu, int entry)
     }
     else if (e && e->id && grub_strncmp(e->id, "DIR_", 4) == 0)
     {
+        g_ventoy_theme_path[0] = 0;
         for (i = 0; i < e->argc; i++)
         {
             if (e->args[i] && grub_strncmp(e->args[i], "_VTIP_", 6) == 0)
@@ -663,9 +671,7 @@ run_menu (grub_menu_t menu, int nested, int *auto_boot)
 
   if (g_ventoy_suppress_esc)
       default_entry = g_ventoy_suppress_esc_default;
-  else if (g_ventoy_last_entry >= 0 && g_ventoy_last_entry < menu->size) {
-      default_entry = g_ventoy_last_entry;
-  } 
+
   /* If DEFAULT_ENTRY is not within the menu entries, fall back to
      the first entry.  */
   else if (default_entry < 0 || default_entry >= menu->size)
