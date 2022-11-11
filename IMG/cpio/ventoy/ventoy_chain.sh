@@ -52,8 +52,12 @@ ventoy_get_os_type() {
         fi
     fi
 
+    # PrimeOS :
+    if $GREP -q 'PrimeOS' /proc/version; then
+        echo 'primeos'; return
+
     # Debian :
-    if $GREP -q '[Dd]ebian' /proc/version; then
+    elif $GREP -q '[Dd]ebian' /proc/version; then
         echo 'debian'; return
 
     # Ubuntu : do the same process with debian
@@ -89,7 +93,10 @@ ventoy_get_os_type() {
     # Fedora : do the same process with rhel7
     elif $GREP -q '\.fc[0-9][0-9]\.' /proc/version; then
         echo 'rhel7'; return
-        
+
+    elif $GREP -q 'euleros' /proc/version; then
+        echo 'rhel7'; return
+
     # SUSE
     elif $GREP -q 'SUSE' /proc/version; then
         echo 'suse'; return
@@ -337,6 +344,31 @@ ventoy_get_os_type() {
     if [ -f /etc/openEuler-release ]; then
         echo "openEuler"; return
     fi
+    
+    
+    #special arch based iso file check
+    if [ -f /init ]; then
+        if $GREP -q 'mount_handler' /init; then
+            if [ -d /hooks ]; then
+                if $BUSYBOX_PATH/ls -1 /hooks/ | $GREP -q '.*iso$'; then
+                    echo "arch"; return
+                fi
+            elif [ -d /hook ]; then
+                if $BUSYBOX_PATH/ls -1 /hook/ | $GREP -q '.*iso$'; then
+                    echo "arch"; return
+                fi
+            fi
+        fi
+    fi
+    
+    
+    #Kylin V10 Server
+    if [ -f /usr/sbin/dhclient ]; then
+        if $BUSYBOX_PATH/strings /usr/sbin/dhclient | $GREP -i -q -m1 openeuler; then
+            echo 'openEuler'; return
+        fi
+    fi
+    
     
     echo "default"
 }

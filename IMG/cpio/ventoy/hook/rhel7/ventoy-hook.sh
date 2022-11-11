@@ -26,15 +26,28 @@ if [ -f $VTOY_PATH/autoinstall ]; then
     VTKS="inst.ks=file:$VTOY_PATH/autoinstall"
 else
     for vtParam in $($CAT /proc/cmdline); do
+        if echo $vtParam | $GREP -q 'ks=file:/'; then
+            continue
+        fi
+    
         if echo $vtParam | $GREP -q 'inst.ks=hd:LABEL='; then
+            vtRawKsFull="$vtParam"
             vtRawKs=$(echo $vtParam | $AWK -F: '{print $NF}')
-            VTKS="inst.ks=hd:/dev/dm-0:$vtRawKs"
+            VTKS="inst.ks=hd:/dev/ventoy:$vtRawKs"
             break
         fi
         
         if echo $vtParam | $GREP -q '^ks=.*:/'; then
+            vtRawKsFull="$vtParam"
             vtRawKs=$(echo $vtParam | $AWK -F: '{print $NF}')
-            VTKS="ks=hd:/dev/dm-0:$vtRawKs"
+            VTKS="ks=hd:/dev/ventoy:$vtRawKs"
+            break
+        fi
+        
+        if echo $vtParam | $GREP -q '^inst.ks=.*:/'; then
+            vtRawKsFull="$vtParam"
+            vtRawKs=$(echo $vtParam | $AWK -F: '{print $NF}')
+            VTKS="inst.ks=hd:/dev/ventoy:$vtRawKs"
             break
         fi
     done
@@ -58,8 +71,17 @@ if [ -f $VTOY_PATH/ventoy_persistent_map ]; then
     $BUSYBOX_PATH/rm -rf $VTOY_PATH/selinuxfs
 fi
 
-
 echo "VTKS=$VTKS  VTOVERLAY=$VTOVERLAY" >> $VTLOG
+
+if [ -n "$vtRawKs" ]; then
+    if echo $vtRawKsFull | $EGREP -q "=http|=https|=ftp|=nfs|=hmc"; then
+        echo "vtRawKsFull=$vtRawKsFull no patch needed." >> $VTLOG
+        vtRawKs=""
+        VTKS=""
+    else
+        echo "$vtRawKs" > $VTOY_PATH/ventoy_ks_rootpath
+    fi    
+fi
 
 if ls $VTOY_PATH | $GREP -q 'ventoy_dud[0-9]'; then
     for vtDud in $(ls $VTOY_PATH/ventoy_dud*); do
@@ -69,9 +91,9 @@ fi
 echo "vtInstDD=$vtInstDD" >> $VTLOG
 
 if $GREP -q 'root=live' /proc/cmdline; then
-    $SED "s#printf\(.*\)\$CMDLINE#printf\1\$CMDLINE root=live:/dev/dm-0 $VTKS $VTOVERLAY $vtInstDD#" -i /lib/dracut-lib.sh
+    $SED "s#printf\(.*\)\$CMDLINE#printf\1\$CMDLINE root=live:/dev/ventoy $VTKS $VTOVERLAY $vtInstDD#" -i /lib/dracut-lib.sh
 else
-    $SED "s#printf\(.*\)\$CMDLINE#printf\1\$CMDLINE inst.stage2=hd:/dev/dm-0 $VTKS $VTOVERLAY $vtInstDD#" -i /lib/dracut-lib.sh
+    $SED "s#printf\(.*\)\$CMDLINE#printf\1\$CMDLINE inst.stage2=hd:/dev/ventoy $VTKS $VTOVERLAY $vtInstDD#" -i /lib/dracut-lib.sh
 fi
 
 ventoy_set_inotify_script  rhel7/ventoy-inotifyd-hook.sh
@@ -119,3 +141,12 @@ if [ -e /usr/sbin/anaconda-diskroot ]; then
     $SED  's/^mount $dev $repodir/mount -oro $dev $repodir/' -i /usr/sbin/anaconda-diskroot
 fi
 
+#For Fedora CoreOS
+if $GREP -i -q 'fedora.*coreos' /etc/os-release; then
+    $SED "s#isosrc=.*#isosrc=/dev/mapper/ventoy#" -i /lib/systemd/system-generators/live-generator
+    cp -a $VTOY_PATH/hook/rhel7/ventoy-make-link.sh /lib/dracut/hooks/pre-mount/99-ventoy-premount-mklink.sh
+fi
+
+if [ -f $VTOY_PATH/autoinstall ]; then
+    cp -a $VTOY_PATH/hook/rhel7/ventoy-autoexp.sh /lib/dracut/hooks/pre-mount/99-ventoy-autoexp.sh
+fi

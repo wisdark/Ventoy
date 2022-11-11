@@ -60,7 +60,7 @@ ventoy_grub_param_file_replace *g_file_replace_list = NULL;
 ventoy_efi_file_replace g_efi_file_replace;
 
 ventoy_grub_param_file_replace *g_img_replace_list = NULL;
-ventoy_efi_file_replace g_img_file_replace;
+ventoy_efi_file_replace g_img_file_replace[VTOY_MAX_CONF_REPLACE];
 
 CONST CHAR16 gIso9660EfiDriverPath[] = ISO9660_EFI_DRIVER_PATH;
 CONST CHAR16 gUdfEfiDriverPath[] = UDF_EFI_DRIVER_PATH;
@@ -577,7 +577,8 @@ STATIC EFI_STATUS EFIAPI ventoy_find_iso_disk(IN EFI_HANDLE ImageHandle)
             continue;
         }
 
-        if (CompareMem(g_chain->os_param.vtoy_disk_guid, pBuffer + 0x180, 16) == 0)
+        if (CompareMem(g_chain->os_param.vtoy_disk_guid, pBuffer + 0x180, 16) == 0 &&
+            CompareMem(g_chain->os_param.vtoy_disk_signature, pBuffer + 0x1b8, 4) == 0)
         {
             pMBR = (MBR_HEAD *)pBuffer;
             if (g_os_param_reserved[6] == 0 && pMBR->PartTbl[0].FsFlag != 0xEE)
@@ -599,7 +600,7 @@ STATIC EFI_STATUS EFIAPI ventoy_find_iso_disk(IN EFI_HANDLE ImageHandle)
                               Handles[i],
                               EFI_OPEN_PROTOCOL_GET_PROTOCOL);
             
-            debug("Find Ventoy Disk Handle:%p DP:%s", Handles[i], 
+            debug("Find Ventoy Disk Sig Handle:%p DP:%s", Handles[i], 
                 ConvertDevicePathToText(gBlockData.pDiskDevPath, FALSE, FALSE));
             break;
         }
@@ -828,6 +829,7 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
     ventoy_grub_param *pGrubParam = NULL;
     EFI_LOADED_IMAGE_PROTOCOL *pImageInfo = NULL;
     ventoy_chain_head *chain = NULL;
+    ventoy_grub_param_file_replace *replace = NULL;
 
     Status = gBS->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&pImageInfo);
     if (EFI_ERROR(Status))
@@ -925,18 +927,27 @@ STATIC EFI_STATUS EFIAPI ventoy_parse_cmdline(IN EFI_HANDLE ImageHandle)
         old_cnt > 3 ? g_file_replace_list->old_file_name[3] : ""
         );
 
-    g_img_replace_list = &pGrubParam->img_replace;
-    ventoy_proc_img_replace_name(g_img_replace_list);
-    old_cnt = g_img_replace_list->old_file_cnt;
-    debug("img replace: magic:0x%x virtid:%u name count:%u <%a> <%a> <%a> <%a>",
-        g_img_replace_list->magic,
-        g_img_replace_list->new_file_virtual_id,
-        old_cnt,
-        old_cnt > 0 ? g_img_replace_list->old_file_name[0] : "",
-        old_cnt > 1 ? g_img_replace_list->old_file_name[1] : "",
-        old_cnt > 2 ? g_img_replace_list->old_file_name[2] : "",
-        old_cnt > 3 ? g_img_replace_list->old_file_name[3] : ""
-        );
+    
+    for (i = 0; i < VTOY_MAX_CONF_REPLACE; i++)
+    {
+        replace = pGrubParam->img_replace + i;
+        if (replace->magic == GRUB_IMG_REPLACE_MAGIC)
+        {
+            ventoy_proc_img_replace_name(replace);
+            old_cnt = replace->old_file_cnt;
+            debug("img replace[%d]: magic:0x%x virtid:%u name count:%u <%a> <%a> <%a> <%a>",
+                  i, replace->magic,
+                  replace->new_file_virtual_id,
+                  old_cnt,
+                  old_cnt > 0 ? replace->old_file_name[0] : "",
+                  old_cnt > 1 ? replace->old_file_name[1] : "",
+                  old_cnt > 2 ? replace->old_file_name[2] : "",
+                  old_cnt > 3 ? replace->old_file_name[3] : ""
+                  );
+            g_img_replace_list = pGrubParam->img_replace;
+        }
+    }
+
     
     pPos = StrStr(pCmdLine, L"mem:");
     chain = (ventoy_chain_head *)StrHexToUintn(pPos + 4);
@@ -1177,8 +1188,7 @@ EFI_STATUS EFIAPI ventoy_boot(IN EFI_HANDLE ImageHandle)
                 gST->ConIn->Reset(gST->ConIn, FALSE);
             }
             
-            if ((g_file_replace_list && g_file_replace_list->magic == GRUB_FILE_REPLACE_MAGIC) ||
-                (g_img_replace_list && g_img_replace_list->magic == GRUB_IMG_REPLACE_MAGIC))
+            if ((g_file_replace_list && g_file_replace_list->magic == GRUB_FILE_REPLACE_MAGIC) || g_img_replace_list)
             {
                 ventoy_wrapper_push_openvolume(pFile->OpenVolume);
                 pFile->OpenVolume = ventoy_wrapper_open_volume;
