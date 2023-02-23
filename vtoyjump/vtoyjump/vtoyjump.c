@@ -60,6 +60,23 @@ static CHAR g_prog_name[MAX_PATH];
 #define MUTEX_LOCK(hmutex)  if (hmutex != NULL) LockStatus = WaitForSingleObject(hmutex, INFINITE)
 #define MUTEX_UNLOCK(hmutex)  if (hmutex != NULL && WAIT_OBJECT_0 == LockStatus) ReleaseMutex(hmutex)
 
+#define BREAK()  BreakAndLaunchCmd(__LINE__)
+
+static void BreakAndLaunchCmd(int line)
+{
+    STARTUPINFOA Si;
+    PROCESS_INFORMATION Pi;
+
+    Log("Break at line:%d", line);
+    
+    GetStartupInfoA(&Si);
+    Si.dwFlags |= STARTF_USESHOWWINDOW;
+    Si.wShowWindow = SW_NORMAL;
+
+    CreateProcessA(NULL, "cmd.exe", NULL, NULL, FALSE, 0, NULL, NULL, &Si, &Pi);
+    WaitForSingleObject(Pi.hProcess, INFINITE);
+}
+
 static const char * GetFileNameInPath(const char *fullpath)
 {
     int i;
@@ -459,13 +476,23 @@ static int IsUTF8Encode(const char *src)
     return 0;
 }
 
+static int Utf16ToUtf8(const WCHAR *src, char *dst)
+{
+    int len;
+    int size;
+
+    len = (int)wcslen(src) + 1;
+    size = WideCharToMultiByte(CP_UTF8, 0, src, len, NULL, 0, NULL, NULL);
+    return WideCharToMultiByte(CP_UTF8, 0, src, len, dst, size, NULL, NULL);
+}
+
 static int Utf8ToUtf16(const char* src, WCHAR * dst)
 {
     int size = MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, 0);
     return MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, size + 1);
 }
 
-static BOOL IsDirExist(const char *Fmt, ...)
+BOOL IsDirExist(const char *Fmt, ...)
 {
     va_list Arg;    
     DWORD Attr;
@@ -497,7 +524,7 @@ static BOOL IsDirExist(const char *Fmt, ...)
     return FALSE;
 }
 
-static BOOL IsFileExist(const char *Fmt, ...)
+BOOL IsFileExist(const char *Fmt, ...)
 {
     va_list Arg;
     HANDLE hFile;
@@ -889,7 +916,7 @@ static BOOL Is2K10PE(void)
     return bRet;
 }
 
-static CHAR GetIMDiskMountLogicalDrive(void)
+static CHAR GetIMDiskMountLogicalDrive(const char *suffix)
 {
     CHAR Letter = 'Y';
     DWORD Drives;
@@ -900,6 +927,12 @@ static CHAR GetIMDiskMountLogicalDrive(void)
     {
         Log("Use M: for 2K10 PE");
         return 'M';
+    }
+
+    //fixed use Z as mountpoint for Lenovo Product Recovery
+    if (strcmp(suffix, "VTLRI") == 0)
+    {
+        return 'Z';
     }
 
     Drives = GetLogicalDrives();
@@ -1046,17 +1079,18 @@ End:
     return rc;
 }
 
-static int VentoyRunImdisk(const char *IsoPath, const char *imdiskexe)
+static int VentoyRunImdisk(const char *suffix, const char *IsoPath, const char *imdiskexe, const char *opt)
 {
     CHAR Letter;
     CHAR Cmdline[512];
     WCHAR CmdlineW[512];
     PROCESS_INFORMATION Pi;
 
-    Log("VentoyRunImdisk <%s> <%s>", IsoPath, imdiskexe);
+    Log("VentoyRunImdisk <%s> <%s> <%s> <%s>", suffix, IsoPath, imdiskexe, opt);
 
-    Letter = GetIMDiskMountLogicalDrive();
-    sprintf_s(Cmdline, sizeof(Cmdline), "%s -a -o ro -f \"%s\" -m %C:", imdiskexe, IsoPath, Letter);
+    Letter = GetIMDiskMountLogicalDrive(suffix);
+
+    sprintf_s(Cmdline, sizeof(Cmdline), "%s -a -o %s -f \"%s\" -m %C:", imdiskexe, opt, IsoPath, Letter);    
     Log("mount iso to %C: use imdisk cmd <%s>", Letter, Cmdline);
 
     if (IsUTF8Encode(IsoPath))
@@ -1099,7 +1133,7 @@ int VentoyMountISOByImdisk(const char *IsoPath, DWORD PhyDrive)
 
     if (0 == VentoyCopyImdisk(PhyDrive, ImPath))
     {
-        VentoyRunImdisk(IsoPath, ImPath);
+        VentoyRunImdisk("iso", IsoPath, ImPath, "ro");
         rc = 0;
     }
 
@@ -2022,36 +2056,19 @@ static int ProcessUnattendedInstallation(const char *script, DWORD PhyDrive)
     return 0;
 }
 
-static int Windows11BypassCheck(const char *isofile, const char MntLetter)
+static int VentoyGetFileVersion(const CHAR *FilePath, UINT16 *pMajor, UINT16 *pMinor, UINT16 *pBuild, UINT16 *pRevision)
 {
-    int Ret = 1;
+    int ret = 1;
     DWORD dwHandle;
     DWORD dwSize;
-    DWORD dwValue = 1;
     UINT VerLen = 0;
     CHAR *Buffer = NULL;
     VS_FIXEDFILEINFO* VerInfo = NULL;
-    CHAR CheckFile[MAX_PATH];
     UINT16 Major, Minor, Build, Revision;
 
-    Log("Windows11BypassCheck for <%s> %C:", isofile, MntLetter);
+    Log("Get file version for <%s>", FilePath);
 
-    if (FALSE == IsFileExist("%C:\\sources\\boot.wim", MntLetter) ||
-        FALSE == IsFileExist("%C:\\sources\\compatresources.dll", MntLetter))
-    {
-        Log("boot.wim/compatresources.dll not exist, this is not a windows install media.");
-        goto End;
-    }
-
-    if (FALSE == IsFileExist("%C:\\sources\\install.wim", MntLetter) && 
-        FALSE == IsFileExist("%C:\\sources\\install.esd", MntLetter))
-    {
-        Log("install.wim/install.esd not exist, this is not a windows install media.");
-        goto End;
-    }
-
-    sprintf_s(CheckFile, sizeof(CheckFile), "%C:\\sources\\compatresources.dll", MntLetter);
-    dwSize = GetFileVersionInfoSizeA(CheckFile, &dwHandle);
+    dwSize = GetFileVersionInfoSizeA(FilePath, &dwHandle);
     if (0 == dwSize)
     {
         Log("Failed to get file version info size: %u", LASTERR);
@@ -2061,10 +2078,11 @@ static int Windows11BypassCheck(const char *isofile, const char MntLetter)
     Buffer = malloc(dwSize);
     if (!Buffer)
     {
+        Log("malloc failed %u", dwSize);
         goto End;
     }
 
-    if (FALSE == GetFileVersionInfoA(CheckFile, dwHandle, dwSize, Buffer))
+    if (FALSE == GetFileVersionInfoA(FilePath, dwHandle, dwSize, Buffer))
     {
         Log("Failed to get file version info : %u", LASTERR);
         goto End;
@@ -2086,49 +2104,170 @@ static int Windows11BypassCheck(const char *isofile, const char MntLetter)
                 Major = 11;
             }
 
-            if (Major != 11)
+            if (pMajor)
             {
-                Log("This is not Windows 11, not need to bypass.", Major);
-                goto End;
+                *pMajor = Major;
             }
+            if (pMinor)
+            {
+                *pMinor = Minor;
+            }
+            if (pBuild)
+            {
+                *pBuild = Build;
+            }
+            if (pRevision)
+            {
+                *pRevision = Revision;
+            }
+
+            ret = 0;
+        }
+        else
+        {
+            Log("Invalid verinfo signature 0x%x", VerInfo->dwSignature);
         }
     }
-
-    //Now we really need to bypass windows 11 check. create registry
-    HKEY hKey = NULL;
-    HKEY hSubKey = NULL;
-    LSTATUS Status;
-
-    Status = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "System\\Setup", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKey, &dwSize);
-    if (ERROR_SUCCESS != Status)
+    else
     {
-        Log("Failed to create reg key System\\Setup %u %u", LASTERR, Status);
-        goto End;
+        Log("VerQueryValueA failed %u", LASTERR);
     }
-
-    Status = RegCreateKeyExA(hKey, "LabConfig", 0, NULL, 0, KEY_SET_VALUE | KEY_QUERY_VALUE | KEY_CREATE_SUB_KEY, NULL, &hSubKey, &dwSize);
-    if (ERROR_SUCCESS != Status)
-    {
-        Log("Failed to create LabConfig reg  %u %u", LASTERR, Status);
-        goto End;
-    }
-
-    //set reg value
-    Status += RegSetValueExA(hSubKey, "BypassRAMCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
-    Status += RegSetValueExA(hSubKey, "BypassTPMCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
-    Status += RegSetValueExA(hSubKey, "BypassSecureBootCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
-    Status += RegSetValueExA(hSubKey, "BypassStorageCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
-    Status += RegSetValueExA(hSubKey, "BypassCPUCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
-
-    Log("Create bypass registry %s %u", (Status == ERROR_SUCCESS) ? "SUCCESS" : "FAILED", Status);
-
-    Ret = 0;
 
 End:
     if (Buffer)
     {
         free(Buffer);
     }
+
+    return ret;
+}
+
+static BOOL VentoyIsNeedBypass(const char *isofile, const char MntLetter)
+{
+    UINT16 Major; 
+    BOOL bRet = FALSE;
+    CHAR CheckFile[MAX_PATH];
+
+    if (FALSE == IsFileExist("%C:\\sources\\install.wim", MntLetter) &&
+        FALSE == IsFileExist("%C:\\sources\\install.esd", MntLetter))
+    {
+        Log("install.wim/install.esd not exist, this is not a windows install media.");
+        goto End;
+    }
+
+    if (FALSE == IsFileExist("%C:\\sources\\boot.wim", MntLetter))
+    {
+        Log("boot.wim not exist, this is not a windows install media.");
+        goto End;
+    }
+
+    if (IsFileExist("%C:\\sources\\compatresources.dll", MntLetter))
+    {
+        sprintf_s(CheckFile, sizeof(CheckFile), "%C:\\sources\\compatresources.dll", MntLetter);
+    }
+    else if (IsFileExist("%C:\\setup.exe", MntLetter))
+    {
+        sprintf_s(CheckFile, sizeof(CheckFile), "%C:\\setup.exe", MntLetter);
+    }
+    else if (IsFileExist("X:\\setup.exe"))
+    {
+        sprintf_s(CheckFile, sizeof(CheckFile), "X:\\setup.exe");
+    }
+    else
+    {
+        Log("No Check file found");
+        goto End;
+    }
+
+    if (VentoyGetFileVersion(CheckFile, &Major, NULL, NULL, NULL))
+    {
+        goto End;
+    }
+
+    if (Major >= 11)
+    {
+        Log("Enable for Windows 11 %u", Major);
+        bRet = TRUE;
+    }
+    else
+    {
+        Log("This is not Windows 11, not need to bypass.", Major);
+    }
+
+End:
+    return bRet;
+}
+
+static int Windows11Bypass(const char *isofile, const char MntLetter, UINT8 Check, UINT8 NRO)
+{
+    int Ret = 1;        
+    HKEY hKey = NULL;
+    HKEY hSubKey = NULL;
+    LSTATUS Status;
+    DWORD dwValue = 1;
+    DWORD dwSize;
+
+    Log("Windows11Bypass for <%s> %C: Check:%u NRO:%u", isofile, MntLetter, Check, NRO);
+
+    if (!VentoyIsNeedBypass(isofile, MntLetter))
+    {
+        goto End;
+    }
+
+    //Now we really need to bypass windows 11 check. create registry
+
+    if (Check)
+    {
+        Status = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "System\\Setup", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKey, &dwSize);
+        if (ERROR_SUCCESS != Status)
+        {
+            Log("Failed to create reg key System\\Setup %u %u", LASTERR, Status);
+            goto End;
+        }
+
+        Status = RegCreateKeyExA(hKey, "LabConfig", 0, NULL, 0, KEY_SET_VALUE | KEY_QUERY_VALUE | KEY_CREATE_SUB_KEY, NULL, &hSubKey, &dwSize);
+        if (ERROR_SUCCESS != Status)
+        {
+            Log("Failed to create LabConfig reg  %u %u", LASTERR, Status);
+            goto End;
+        }
+
+        //set reg value
+        Status += RegSetValueExA(hSubKey, "BypassRAMCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
+        Status += RegSetValueExA(hSubKey, "BypassTPMCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
+        Status += RegSetValueExA(hSubKey, "BypassSecureBootCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
+        Status += RegSetValueExA(hSubKey, "BypassCPUCheck", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
+
+        Log("Create bypass check registry %s %u", (Status == ERROR_SUCCESS) ? "SUCCESS" : "FAILED", Status);
+    }
+
+
+    if (NRO)
+    {
+        Status = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKey, &dwSize);
+        if (ERROR_SUCCESS != Status)
+        {
+            Log("Failed to create reg key SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE %u %u", LASTERR, Status);
+            goto End;
+        }
+
+        Status = RegCreateKeyExA(hKey, "OOBE", 0, NULL, 0, KEY_SET_VALUE | KEY_QUERY_VALUE | KEY_CREATE_SUB_KEY, NULL, &hSubKey, &dwSize);
+        if (ERROR_SUCCESS != Status)
+        {
+            Log("Failed to create OOBE reg  %u %u", LASTERR, Status);
+            goto End;
+        }
+
+        Status += RegSetValueExA(hSubKey, "BypassNRO", 0, REG_DWORD, (LPBYTE)&dwValue, sizeof(DWORD));
+        Log("Create BypassNRO registry %s %u", (Status == ERROR_SUCCESS) ? "SUCCESS" : "FAILED", Status);
+
+        SetupMonNroStart(isofile);
+    }
+    
+
+    Ret = 0;
+
+End:
     
     return Ret; 
 }
@@ -2166,6 +2305,90 @@ static BOOL CheckVentoyDisk(DWORD DiskNum)
     return FALSE;
 }
 
+static BOOL VentoyIsLenovoRecovery(CHAR *IsoPath, CHAR *VTLRIPath)
+{
+    int n;
+    int UTF8 = 0;
+    HANDLE hFile;
+    DWORD Attr;
+    WCHAR FilePathW[MAX_PATH];
+
+    UTF8 = IsUTF8Encode(IsoPath);
+
+    if (UTF8)
+    {
+        Utf8ToUtf16(IsoPath, FilePathW);
+
+        n = (int)wcslen(FilePathW);
+        if (n > 4 && _wcsicmp(FilePathW + n - 4, L".iso") == 0)
+        {
+            FilePathW[n - 3] = L'V';
+            FilePathW[n - 2] = L'T';
+            FilePathW[n - 1] = L'L';
+            FilePathW[n - 0] = L'R';
+            FilePathW[n + 1] = L'I';
+            FilePathW[n + 2] = 0;
+
+            hFile = CreateFileW(FilePathW, FILE_READ_EA, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+            if (hFile != INVALID_HANDLE_VALUE)
+            {
+                CloseHandle(hFile);
+                Attr = GetFileAttributesW(FilePathW);
+
+                if ((Attr & FILE_ATTRIBUTE_DIRECTORY) == 0)
+                {
+                    Utf16ToUtf8(FilePathW, VTLRIPath);
+                    return TRUE;
+                }
+            }
+        }
+    }
+    else
+    {
+        n = (int)strlen(IsoPath);
+        if (n > 4 && _stricmp(IsoPath + n - 4, ".iso") == 0)
+        {
+            IsoPath[n - 4] = 0;
+            sprintf_s(VTLRIPath, MAX_PATH, "%s.VTLRI", IsoPath);
+            IsoPath[n - 4] = '.';
+
+            if (IsFileExist(VTLRIPath))
+            {
+                return TRUE;
+            }
+        }
+    }
+    
+    return FALSE;
+}
+
+static int MountVTLRI(CHAR *ImgPath, DWORD PhyDrive)
+{
+    STARTUPINFOA Si;
+    PROCESS_INFORMATION Pi;
+    CHAR Cmdline[256]; 
+    CHAR ImDiskPath[256];    
+    
+    Log("MountVTLRI <%s> %u", ImgPath, PhyDrive);
+
+    VentoyCopyImdisk(PhyDrive, ImDiskPath);
+
+    VentoyRunImdisk("VTLRI", ImgPath, ImDiskPath, "ro,rem");
+
+    CopyFileA(g_prog_full_path, "ventoy\\VTLRISRV.exe", FALSE);
+
+    sprintf_s(Cmdline, sizeof(Cmdline), "ventoy\\VTLRISRV.exe VTLRI_SRV %C Z", ImgPath[0]);
+
+
+    GetStartupInfoA(&Si);
+    Si.dwFlags |= STARTF_USESHOWWINDOW;
+    Si.wShowWindow = SW_HIDE;
+    CreateProcessA(NULL, Cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &Si, &Pi);
+
+    Log("Process cmdline <%s>", Cmdline);
+
+    return 0;
+}
 
 static int VentoyHook(ventoy_os_param *param)
 {
@@ -2185,6 +2408,7 @@ static int VentoyHook(ventoy_os_param *param)
     DISK_EXTENT VtoyDiskExtent;
     UINT8 UUID[16];
     CHAR IsoPath[MAX_PATH];
+    CHAR VTLRIPath[MAX_PATH];
 
     Log("VentoyHook Path:<%s>", param->vtoy_img_path);
 
@@ -2323,8 +2547,17 @@ static int VentoyHook(ventoy_os_param *param)
 
     Drives = GetLogicalDrives();
     Log("Drives before mount: 0x%x", Drives);
-
-    rc = MountIsoFile(IsoPath, VtoyDiskNum);
+    
+    if (VentoyIsLenovoRecovery(IsoPath, VTLRIPath))
+    {
+        Log("This is lenovo recovery image, mount VTLRI file.");
+        rc = MountVTLRI(VTLRIPath, VtoyDiskNum);
+    }
+    else
+    {
+        Log("This is normal image, mount ISO file.");
+        rc = MountIsoFile(IsoPath, VtoyDiskNum);
+    }
 
     NewDrives = GetLogicalDrives();
     Log("Drives after mount: 0x%x (0x%x)", NewDrives, (NewDrives ^ Drives));
@@ -2353,9 +2586,9 @@ static int VentoyHook(ventoy_os_param *param)
     Log("Mount ISO FILE: %s", rc == 0 ? "SUCCESS" : "FAILED");
 
     //Windows 11 bypass check
-    if (g_windows_data.windows11_bypass_check == 1)
+    if (g_windows_data.windows11_bypass_check == 1 || g_windows_data.windows11_bypass_nro == 1)
     {
-        Windows11BypassCheck(IsoPath, MntLetter);
+        Windows11Bypass(IsoPath, MntLetter, g_windows_data.windows11_bypass_check, g_windows_data.windows11_bypass_nro);
     }
 
     // for protect
@@ -2723,6 +2956,52 @@ static int vtoy_remove_duplicate_file(char *File)
     return 0;
 }
 
+static int VTLRI_ServiceMain(int argc, char **argv)
+{
+    int n = 0;
+    DWORD Err;
+    BOOL bRet = TRUE;
+    CHAR Drive[16];
+    CHAR FsType[64];
+    CHAR Cmdline[256];
+    PROCESS_INFORMATION Pi;
+    STARTUPINFOA Si;
+
+    //XXX.exe VTLRI_SRV D Z
+    Log("VTLRI_ServiceMain start %s %s %s ...", argv[0], argv[1], argv[2]);
+
+    sprintf_s(Drive, sizeof(Drive), "%C:\\", argv[2][0]);
+
+    while (n < 3)
+    {
+        bRet = GetVolumeInformationA(Drive, NULL, 0, NULL, NULL, NULL, FsType, sizeof(FsType));
+        if (bRet)
+        {
+            Sleep(400);
+        }
+        else
+        {
+            Err = LASTERR;
+            if (Err == ERROR_PATH_NOT_FOUND)
+            {
+                Log("%s not found", Drive);
+                n++;
+            }
+        }
+    }
+
+    sprintf_s(Cmdline, sizeof(Cmdline), "ventoy\\imdisk.exe -d -m %C:", argv[3][0]);
+    Log("Remove disk by <%s>", Cmdline);
+
+    GetStartupInfoA(&Si);
+    Si.dwFlags |= STARTF_USESHOWWINDOW;
+    Si.wShowWindow = SW_HIDE;
+
+    CreateProcessA(NULL, Cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &Si, &Pi);
+    WaitForSingleObject(Pi.hProcess, INFINITE);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -2736,6 +3015,11 @@ int main(int argc, char **argv)
     g_vtoyins_mutex = CreateMutexA(NULL, FALSE, "VTOYINS_LOCK");
 
     Log("######## VentoyJump %dbit ##########", g_system_bit);
+
+    if (argc > 1 && strcmp(argv[1], "VTLRI_SRV") == 0)
+    {
+        return VTLRI_ServiceMain(argc, argv);
+    }
 
     GetCurrentDirectoryA(sizeof(CurDir), CurDir);
     Log("Current directory is <%s>", CurDir);

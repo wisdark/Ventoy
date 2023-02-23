@@ -22,7 +22,7 @@
 
 #include <civetweb.h>
 
-#define MAX_LANGUAGE  128
+#define MAX_LANGUAGE  256
 
 #define L1 "    "
 #define L2 "        "
@@ -75,6 +75,7 @@ typedef struct data_control
     int filter_vhd;
     int filter_vtoy;
     int win11_bypass_check;
+    int win11_bypass_nro;
     int menu_timeout;
     int secondary_menu_timeout;
     int linux_remount;
@@ -83,7 +84,7 @@ typedef struct data_control
     char default_search_root[MAX_PATH];
     char default_image[MAX_PATH];
     char default_kbd_layout[32];
-    char help_text_language[32];
+    char menu_language[32];
 }data_control;
 
 #define display_mode_gui            0
@@ -100,6 +101,7 @@ typedef struct path_node
 typedef struct data_theme
 {
     int default_file;
+    int resolution_fit;
     path_node *filelist;
     int display_mode;
     char gfxmode[32];
@@ -388,7 +390,7 @@ else\
 #define ventoy_parse_json(name) \
 {\
     int __loop;\
-    int __len = strlen(#name);\
+    int __len = (int)strlen(#name);\
     if (strncmp(#name, node->pcName, __len) == 0)\
     {\
         for (__loop = 0; __loop < bios_max; __loop++)\

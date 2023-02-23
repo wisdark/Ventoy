@@ -1,4 +1,13 @@
 
+function VtoyUTF16HexToAscii(hex) {
+    var str = "";        
+    for (var i = 0; i < hex.length; i += 4) {
+        str += String.fromCharCode(parseInt(hex.substring(i, i + 4), 16));
+    }
+    
+    return str;
+}
+
 function ventoy_replace_slash(str) {
     var str1 = str.replace(/\\/g, '/');
     var str2 = str1.replace(/\/\//g, '/');
@@ -24,6 +33,8 @@ function ventoy_get_ulen(str) {
 
 
 function ventoy_common_check_path(path) {
+    var curdir
+    
     if (path.indexOf('//') >= 0) {
         return false;
     }
@@ -32,7 +43,12 @@ function ventoy_common_check_path(path) {
         return false;
     }
 
-    if (path.substr(0, g_current_dir.length) != g_current_dir) {
+    curdir = path.substr(0, g_current_dir.length);    
+    if (curdir.match("^[a-z]:$")) {
+        curdir = curdir.toUpperCase();
+    }
+    
+    if (curdir != g_current_dir) {
         return false;
     }
 

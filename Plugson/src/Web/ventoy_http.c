@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <errno.h>
 #include <time.h>
 
@@ -71,7 +72,7 @@ static const char *g_plugin_name[plugin_type_max] =
     "auto_memdisk", "dud"
 };
 
-static char g_ventoy_help_lang[MAX_LANGUAGE][8];
+static char g_ventoy_menu_lang[MAX_LANGUAGE][8];
 
 static char g_pub_path[2 * MAX_PATH];
 static data_control g_data_control[bios_max + 1];
@@ -96,6 +97,9 @@ static char *g_pub_save_buffer = NULL;
 
 static pthread_mutex_t g_api_mutex;
 static struct mg_context *g_ventoy_http_ctx = NULL;
+
+#define ventoy_is_real_exist_common(xpath, xnode, xtype) \
+    ventoy_path_is_real_exist(xpath, xnode, offsetof(xtype, path), offsetof(xtype, next))
 
 static int ventoy_is_kbd_valid(const char *key)
 {
@@ -168,6 +172,40 @@ static void ventoy_free_path_node_list(path_node *list)
         free(node);
         node = next;
     }    
+}
+
+static int ventoy_path_is_real_exist(const char *path, void *head, size_t pathoff, size_t nextoff)
+{
+    char *node = NULL;
+    const char *nodepath = NULL;
+    const char *realpath = NULL;
+    char pathbuf[MAX_PATH];
+
+    if (strchr(path, '*'))
+    {
+        return 0;
+    }
+
+    realpath = ventoy_real_path(path);
+    scnprintf(pathbuf, sizeof(pathbuf), "%s", realpath);
+
+    node = (char *)head;
+    while (node)
+    {
+        nodepath = node + pathoff;
+        if (NULL == strchr(nodepath, '*'))
+        {
+            realpath = ventoy_real_path(nodepath);
+            if (strcmp(pathbuf, realpath) == 0)
+            {
+                return 1;
+            }
+        }
+        
+        memcpy(&node, node + nextoff, sizeof(node));
+    }
+
+    return 0;
 }
 
 static path_node * ventoy_path_node_add_array(VTOY_JSON *array)
@@ -519,9 +557,11 @@ void ventoy_data_default_control(data_control *data)
     data->max_search_level = -1;
     data->menu_timeout = 0;
     data->secondary_menu_timeout = 0;
+    data->win11_bypass_check = 1;
+    data->win11_bypass_nro = 1;
     
     strlcpy(data->default_kbd_layout, "QWERTY_USA");
-    strlcpy(data->help_text_language, "en_US");
+    strlcpy(data->menu_language, "en_US");
 }
 
 int ventoy_data_cmp_control(data_control *data1, data_control *data2)
@@ -539,6 +579,7 @@ int ventoy_data_cmp_control(data_control *data1, data_control *data2)
         data1->filter_vhd != data2->filter_vhd ||
         data1->filter_vtoy != data2->filter_vtoy ||
         data1->win11_bypass_check != data2->win11_bypass_check ||
+        data1->win11_bypass_nro != data2->win11_bypass_nro ||
         data1->linux_remount != data2->linux_remount ||
         data1->password_asterisk != data2->password_asterisk ||
         data1->secondary_menu != data2->secondary_menu ||
@@ -551,7 +592,7 @@ int ventoy_data_cmp_control(data_control *data1, data_control *data2)
     if (strcmp(data1->default_search_root, data2->default_search_root) ||
         strcmp(data1->default_image, data2->default_image) ||
         strcmp(data1->default_kbd_layout, data2->default_kbd_layout) ||
-        strcmp(data1->help_text_language, data2->help_text_language))
+        strcmp(data1->menu_language, data2->menu_language))
     {
         return 1;
     }
@@ -587,6 +628,7 @@ int ventoy_data_save_control(data_control *data, const char *title, char *buf, i
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_FILE_FLT_VHD", filter_vhd);
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_FILE_FLT_VTOY", filter_vtoy);
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_WIN11_BYPASS_CHECK",  win11_bypass_check);
+    VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_WIN11_BYPASS_NRO",  win11_bypass_nro);
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_LINUX_REMOUNT",  linux_remount);
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_SECONDARY_BOOT_MENU",  secondary_menu);
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_SHOW_PASSWORD_ASTERISK",  password_asterisk);
@@ -594,7 +636,7 @@ int ventoy_data_save_control(data_control *data, const char *title, char *buf, i
     VTOY_JSON_FMT_CTRL_INT(L2, "VTOY_SECONDARY_TIMEOUT",  secondary_menu_timeout);
 
     VTOY_JSON_FMT_CTRL_STRN(L2, "VTOY_DEFAULT_KBD_LAYOUT", default_kbd_layout);        
-    VTOY_JSON_FMT_CTRL_STRN(L2, "VTOY_HELP_TXT_LANGUAGE", help_text_language);  
+    VTOY_JSON_FMT_CTRL_STRN(L2, "VTOY_MENU_LANGUAGE", menu_language);  
 
     if (strcmp(def->default_search_root, data->default_search_root))
     {
@@ -635,13 +677,14 @@ int ventoy_data_json_control(data_control *ctrl, char *buf, int buflen)
     VTOY_JSON_FMT_SINT("filter_vhd", ctrl->filter_vhd);
     VTOY_JSON_FMT_SINT("filter_vtoy", ctrl->filter_vtoy);
     VTOY_JSON_FMT_SINT("win11_bypass_check",  ctrl->win11_bypass_check);
+    VTOY_JSON_FMT_SINT("win11_bypass_nro",  ctrl->win11_bypass_nro);
     VTOY_JSON_FMT_SINT("linux_remount",  ctrl->linux_remount);
     VTOY_JSON_FMT_SINT("secondary_menu",  ctrl->secondary_menu);
     VTOY_JSON_FMT_SINT("password_asterisk",  ctrl->password_asterisk);
     VTOY_JSON_FMT_SINT("menu_timeout",  ctrl->menu_timeout);
     VTOY_JSON_FMT_SINT("secondary_menu_timeout",  ctrl->secondary_menu_timeout);
     VTOY_JSON_FMT_STRN("default_kbd_layout",  ctrl->default_kbd_layout);
-    VTOY_JSON_FMT_STRN("help_text_language",  ctrl->help_text_language);
+    VTOY_JSON_FMT_STRN("menu_language",  ctrl->menu_language);
 
     valid = 0;
     if (ctrl->default_search_root[0] && ventoy_is_directory_exist("%s%s", g_cur_dir, ctrl->default_search_root))
@@ -660,16 +703,15 @@ int ventoy_data_json_control(data_control *ctrl, char *buf, int buflen)
     VTOY_JSON_FMT_STRN("default_image", ctrl->default_image);
     VTOY_JSON_FMT_SINT("default_image_valid", valid);
 
-    VTOY_JSON_FMT_KEY("help_list");
+    VTOY_JSON_FMT_KEY("menu_list");
     VTOY_JSON_FMT_ARY_BEGIN();
 
-    for (i = 0; g_ventoy_help_lang[i][0]; i++)
+    for (i = 0; g_ventoy_menu_lang[i][0]; i++)
     {
-        VTOY_JSON_FMT_ITEM(g_ventoy_help_lang[i]);        
+        VTOY_JSON_FMT_ITEM(g_ventoy_menu_lang[i]);        
     }
     VTOY_JSON_FMT_ARY_ENDEX();
-
-
+    
     VTOY_JSON_FMT_OBJ_END();
     VTOY_JSON_FMT_END(pos);
 
@@ -704,6 +746,7 @@ static int ventoy_api_save_control(struct mg_connection *conn, VTOY_JSON *json)
     VTOY_JSON_INT("filter_vhd", ctrl->filter_vhd);
     VTOY_JSON_INT("filter_vtoy", ctrl->filter_vtoy);
     VTOY_JSON_INT("win11_bypass_check", ctrl->win11_bypass_check);
+    VTOY_JSON_INT("win11_bypass_nro", ctrl->win11_bypass_nro);
     VTOY_JSON_INT("linux_remount", ctrl->linux_remount);
     VTOY_JSON_INT("secondary_menu", ctrl->secondary_menu);
     VTOY_JSON_INT("password_asterisk", ctrl->password_asterisk);
@@ -712,7 +755,7 @@ static int ventoy_api_save_control(struct mg_connection *conn, VTOY_JSON *json)
 
     VTOY_JSON_STR("default_image", ctrl->default_image);
     VTOY_JSON_STR("default_search_root", ctrl->default_search_root);
-    VTOY_JSON_STR("help_text_language", ctrl->help_text_language);
+    VTOY_JSON_STR("menu_language", ctrl->menu_language);
     VTOY_JSON_STR("default_kbd_layout", ctrl->default_kbd_layout);
     
     ret = ventoy_data_save_all();
@@ -782,12 +825,17 @@ int ventoy_data_save_theme(data_theme *data, const char *title, char *buf, int b
             {
                 VTOY_JSON_FMT_ITEM_PATH_LN(L3, node->path);
             }
-            
+
             VTOY_JSON_FMT_ARY_ENDEX_LN(L2);
         
             if (def->default_file != data->default_file)
             {
                 VTOY_JSON_FMT_SINT_LN(L2, "default_file", data->default_file);                
+            }
+            
+            if (def->resolution_fit != data->resolution_fit)
+            {
+                VTOY_JSON_FMT_SINT_LN(L2, "resolution_fit", data->resolution_fit);                
             }
         }
         else
@@ -851,6 +899,7 @@ int ventoy_data_json_theme(data_theme *data, char *buf, int buflen)
     VTOY_JSON_FMT_OBJ_BEGIN();
 
     VTOY_JSON_FMT_SINT("default_file",  data->default_file);
+    VTOY_JSON_FMT_SINT("resolution_fit",  data->resolution_fit);
     VTOY_JSON_FMT_SINT("display_mode",  data->display_mode);
     VTOY_JSON_FMT_STRN("gfxmode", data->gfxmode);
     
@@ -902,6 +951,7 @@ static int ventoy_api_save_theme(struct mg_connection *conn, VTOY_JSON *json)
     data = g_data_theme + index;
 
     VTOY_JSON_INT("default_file", data->default_file);
+    VTOY_JSON_INT("resolution_fit", data->resolution_fit);
     VTOY_JSON_INT("display_mode", data->display_mode);
     VTOY_JSON_STR("gfxmode", data->gfxmode);
     VTOY_JSON_STR("ventoy_left", data->ventoy_left);
@@ -913,6 +963,7 @@ static int ventoy_api_save_theme(struct mg_connection *conn, VTOY_JSON *json)
     ventoy_json_result(conn, ret == 0 ? VTOY_JSON_SUCCESS_RET : VTOY_JSON_FAILED_RET);  
     return 0;
 }
+
 
 static int ventoy_api_theme_add_file(struct mg_connection *conn, VTOY_JSON *json)
 {
@@ -929,6 +980,12 @@ static int ventoy_api_theme_add_file(struct mg_connection *conn, VTOY_JSON *json
     path = VTOY_JSON_STR_EX("path");
     if (path)
     {
+        if (ventoy_is_real_exist_common(path, data->filelist, path_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(path_node));
         if (node)
         {
@@ -975,7 +1032,6 @@ static int ventoy_api_theme_del_file(struct mg_connection *conn, VTOY_JSON *json
     return 0;
 }
 
-
 static int ventoy_api_theme_add_font(struct mg_connection *conn, VTOY_JSON *json)
 {
     int ret;
@@ -984,13 +1040,19 @@ static int ventoy_api_theme_add_font(struct mg_connection *conn, VTOY_JSON *json
     path_node *node = NULL;
     path_node *cur = NULL;
     data_theme *data = NULL;
-    
+
     vtoy_json_get_int(json, "index", &index);
     data = g_data_theme + index;
 
     path = VTOY_JSON_STR_EX("path");
     if (path)
     {
+        if (ventoy_is_real_exist_common(path, data->fontslist, path_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(path_node));
         if (node)
         {
@@ -1193,6 +1255,12 @@ static int ventoy_api_alias_add(struct mg_connection *conn, VTOY_JSON *json)
     alias = VTOY_JSON_STR_EX("alias");
     if (path && alias)
     {
+        if (ventoy_is_real_exist_common(path, data->list, data_alias_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(data_alias_node));
         if (node)
         {
@@ -1438,6 +1506,12 @@ static int ventoy_api_tip_add(struct mg_connection *conn, VTOY_JSON *json)
     tip = VTOY_JSON_STR_EX("tip");
     if (path && tip)
     {
+        if (ventoy_is_real_exist_common(path, data->list, data_tip_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+    
         node = zalloc(sizeof(data_tip_node));
         if (node)
         {
@@ -1787,6 +1861,12 @@ static int ventoy_api_auto_memdisk_add(struct mg_connection *conn, VTOY_JSON *js
     path = VTOY_JSON_STR_EX("path");
     if (path)
     {
+        if (ventoy_is_real_exist_common(path, data->list, path_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(path_node));
         if (node)
         {
@@ -1969,6 +2049,12 @@ static int ventoy_api_image_list_add(struct mg_connection *conn, VTOY_JSON *json
     path = VTOY_JSON_STR_EX("path");
     if (path)
     {
+        if (ventoy_is_real_exist_common(path, data->list, path_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(path_node));
         if (node)
         {
@@ -2224,6 +2310,12 @@ static int ventoy_api_password_add(struct mg_connection *conn, VTOY_JSON *json)
     pwd = VTOY_JSON_STR_EX("pwd");
     if (path && pwd)
     {
+        if (ventoy_is_real_exist_common(path, data->list, menu_password))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+
         node = zalloc(sizeof(menu_password));
         if (node)
         {
@@ -2629,6 +2721,12 @@ static int ventoy_api_dud_add(struct mg_connection *conn, VTOY_JSON *json)
     path = VTOY_JSON_STR_EX("path");
     if (path && array)
     {
+        if (ventoy_is_real_exist_common(path, data->list, dud_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+        
         node = zalloc(sizeof(dud_node));
         if (node)
         {
@@ -2984,6 +3082,12 @@ static int ventoy_api_auto_install_add(struct mg_connection *conn, VTOY_JSON *js
     path = VTOY_JSON_STR_EX("path");
     if (path && array)
     {
+        if (ventoy_is_real_exist_common(path, data->list, auto_install_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }     
+    
         node = zalloc(sizeof(auto_install_node));
         if (node)
         {
@@ -3326,6 +3430,12 @@ static int ventoy_api_persistence_add(struct mg_connection *conn, VTOY_JSON *jso
     path = VTOY_JSON_STR_EX("path");
     if (path && array)
     {
+        if (ventoy_is_real_exist_common(path, data->list, persistence_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+        
         node = zalloc(sizeof(persistence_node));
         if (node)
         {
@@ -3619,6 +3729,12 @@ static int ventoy_api_injection_add(struct mg_connection *conn, VTOY_JSON *json)
     archive = VTOY_JSON_STR_EX("archive");
     if (path && archive)
     {
+        if (ventoy_is_real_exist_common(path, data->list, injection_node))
+        {
+            ventoy_json_result(conn, VTOY_JSON_DUPLICATE);
+            return 0;
+        }
+    
         node = zalloc(sizeof(injection_node));
         if (node)
         {
@@ -3673,24 +3789,47 @@ static int ventoy_api_injection_del(struct mg_connection *conn, VTOY_JSON *json)
 
 static int ventoy_api_preview_json(struct mg_connection *conn, VTOY_JSON *json)
 {
+    int i = 0;
     int pos = 0;
     int len = 0;
-    int encodelen = 0;
+    int utf16enclen = 0;
     char *encodebuf = NULL;
+    unsigned short *utf16buf = NULL;
     
     (void)json;
 
-    len = ventoy_data_real_save_all(0);
-    encodebuf = ventoy_base64_encode(JSON_SAVE_BUFFER, len, &encodelen);
-    encodebuf[encodelen] = 0;
+    /* We can not use json directly, because it will be formated in the JS. */
 
+    len = ventoy_data_real_save_all(0);
+
+    utf16buf = (unsigned short *)malloc(2 * len + 16);    
+    if (!utf16buf)
+    {
+        goto json;
+    }
+
+    utf16enclen = (int)utf8_to_utf16((unsigned char *)JSON_SAVE_BUFFER, len, utf16buf, len + 2);
+
+    encodebuf = (char *)malloc(utf16enclen * 4 + 16);
+    if (!encodebuf)
+    {
+        goto json;
+    }
+
+    for (i = 0; i < utf16enclen; i++)
+    {
+        scnprintf(encodebuf + i * 4, 5, "%04X", utf16buf[i]);
+    }
+
+json:
     VTOY_JSON_FMT_BEGIN(pos, JSON_BUFFER, JSON_BUF_MAX);
     VTOY_JSON_FMT_OBJ_BEGIN();
-    VTOY_JSON_FMT_STRN("json", encodebuf);
+    VTOY_JSON_FMT_STRN("json", (encodebuf ? encodebuf : ""));
     VTOY_JSON_FMT_OBJ_END();
     VTOY_JSON_FMT_END(pos);
 
-    free(encodebuf);
+    CHECK_FREE(encodebuf);
+    CHECK_FREE(utf16buf);
 
     ventoy_json_buffer(conn, JSON_BUFFER, pos);
     return 0;
@@ -3983,6 +4122,11 @@ static int ventoy_parse_control(VTOY_JSON *json, void *p)
         if (node->enDataType == JSON_TYPE_OBJECT)
         {
             child = node->pstChild;
+            
+            if (child->enDataType != JSON_TYPE_STRING)
+            {
+                continue;
+            }
 
             if (strcmp(child->pcName, "VTOY_DEFAULT_MENU_MODE") == 0)
             {
@@ -3990,7 +4134,11 @@ static int ventoy_parse_control(VTOY_JSON *json, void *p)
             }
             else if (strcmp(child->pcName, "VTOY_WIN11_BYPASS_CHECK") == 0)
             {
-                CONTROL_PARSE_INT_DEF_0(child, data->win11_bypass_check);
+                CONTROL_PARSE_INT_DEF_1(child, data->win11_bypass_check);
+            }
+            else if (strcmp(child->pcName, "VTOY_WIN11_BYPASS_NRO") == 0)
+            {
+                CONTROL_PARSE_INT_DEF_1(child, data->win11_bypass_nro);
             }
             else if (strcmp(child->pcName, "VTOY_LINUX_REMOUNT") == 0)
             {
@@ -4046,13 +4194,13 @@ static int ventoy_parse_control(VTOY_JSON *json, void *p)
                     }
                 }
             }
-            else if (strcmp(child->pcName, "VTOY_HELP_TXT_LANGUAGE") == 0)
+            else if (strcmp(child->pcName, "VTOY_MENU_LANGUAGE") == 0)
             {
-                for (i = 0; g_ventoy_help_lang[i][0]; i++)
+                for (i = 0; g_ventoy_menu_lang[i][0]; i++)
                 {
-                    if (strcmp(child->unData.pcStrVal, g_ventoy_help_lang[i]) == 0)
+                    if (strcmp(child->unData.pcStrVal, g_ventoy_menu_lang[i]) == 0)
                     {
-                        strlcpy(data->help_text_language, child->unData.pcStrVal);
+                        strlcpy(data->menu_language, child->unData.pcStrVal);
                         break;
                     }
                 }
@@ -4121,6 +4269,7 @@ static int ventoy_parse_theme(VTOY_JSON *json, void *p)
     vtoy_json_get_string(child, "ventoy_color", sizeof(data->ventoy_color), data->ventoy_color);
     
     vtoy_json_get_int(child, "default_file", &(data->default_file));    
+    vtoy_json_get_int(child, "resolution_fit", &(data->resolution_fit));    
     vtoy_json_get_string(child, "gfxmode", sizeof(data->gfxmode), data->gfxmode);
     vtoy_json_get_string(child, "serial_param", sizeof(data->serial_param), data->serial_param);
 
@@ -4148,6 +4297,7 @@ static int ventoy_parse_theme(VTOY_JSON *json, void *p)
     if (node)
     {
         data->default_file = 0;
+        data->resolution_fit = 0;
 
         pnode = zalloc(sizeof(path_node));
         if (pnode)
@@ -5288,25 +5438,26 @@ int ventoy_http_init(void)
     char *Buffer = NULL;
     int BufLen = 0;
 
-    ventoy_read_file_to_buf("www/helplist", 4, (void **)&Buffer, &BufLen);
+    ventoy_read_file_to_buf("www/menulist", 4, (void **)&Buffer, &BufLen);
     if (Buffer)
     {
         for (i = 0; i < BufLen / 5; i++)
         {
-            memcpy(g_ventoy_help_lang[i], Buffer + i * 5, 5);
-            g_ventoy_help_lang[i][5] = 0;
+            memcpy(g_ventoy_menu_lang[i], Buffer + i * 5, 5);
+            g_ventoy_menu_lang[i][5] = 0;
         }
         free(Buffer);
     }
 #else
     ventoy_file *file;
-    file = ventoy_tar_find_file("www/helplist");
+    
+    file = ventoy_tar_find_file("www/menulist");
     if (file)
     {
         for (i = 0; i < file->size / 5; i++)
         {
-            memcpy(g_ventoy_help_lang[i], (char *)(file->addr) + i * 5, 5);
-            g_ventoy_help_lang[i][5] = 0;
+            memcpy(g_ventoy_menu_lang[i], (char *)(file->addr) + i * 5, 5);
+            g_ventoy_menu_lang[i][5] = 0;
         }
     }
 #endif

@@ -75,7 +75,9 @@ typedef struct ventoy_windows_data
 
     UINT32 auto_install_len;
     
-    UINT8 reserved[255 - 4];
+    UINT8 windows11_bypass_nro;
+
+    UINT8 reserved[255 - 5];
 
     /* auto install script file data ... + auto_install_len */
     /* ...... */
@@ -193,5 +195,9 @@ int unxz(unsigned char *in, int in_size,
     unsigned char *out, int *in_used,
     void(*error)(char *x));
 
+void Log(const char* Fmt, ...);
+int SetupMonNroStart(const char* isopath);
+BOOL IsFileExist(const char* Fmt, ...);
+BOOL IsDirExist(const char* Fmt, ...);
 
 #endif
