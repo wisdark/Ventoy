@@ -26,6 +26,10 @@ ventoy_get_debian_distro() {
         if $EGREP -q "ID=.*antix|ID=.*mx" /etc/initrd-release; then
             echo 'antix'; return
         fi
+    elif [ -e /etc/initrd_release ]; then
+        if $EGREP -q "ID=.*antix|ID=.*mx" /etc/initrd_release; then
+            echo 'antix'; return
+        fi
     fi
     
     if [ -e /DISTRO_SPECS ]; then
@@ -45,6 +49,8 @@ ventoy_get_debian_distro() {
             echo 'mll'; return
         elif $GREP -m1 -q 'stratodesk.com' /init; then
             echo 'stratodesk'; return
+        elif $GREP -q "\bPVE\b" /init; then
+            echo 'pve'; return
         fi
     fi
 

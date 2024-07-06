@@ -244,6 +244,15 @@ static int ventoy_browser_valid_dirname(const char *name, int len)
         return 0;
     }
 
+    if (g_filt_trash_dir)
+    {
+        if (0 == grub_strncmp(name, ".trash-", 7) ||
+            0 == grub_strcmp(name, ".Trashes"))
+        {
+            return 0;
+        }
+    }
+
     if (name[0] == '$')
     {
         if (0 == grub_strncmp(name, "$RECYCLE.BIN", 12) ||
@@ -388,6 +397,11 @@ static int ventoy_browser_iterate_dir(const char *filename, const struct grub_di
         grub_uint64_t fsize = info->size;
         
         if (!ventoy_browser_valid_filename(filename, len, &type))
+        {
+            return 0;
+        }
+
+        if (grub_file_is_vlnk_suffix(filename, len))
         {
             return 0;
         }
